@@ -1,16 +1,16 @@
 {
-  "iterations": 400,
+  "iterations": 1000,
   "workers": 16,
   "max_workers": 32,
   "oversubscription": 2,
-  "hash_mb": 16,
+  "hash_mb": 64,
   "move_overhead_ms": 10,
   "seed": 20261101,
   "mix": {
     "self": 0.5,
     "master": 0.5
   },
-  "verification_total_pairs": 30000,
+  "verification_total_pairs": 8000,
   "spsa": {
     "perturbation": 0.05,
     "gamma": 0.101,
