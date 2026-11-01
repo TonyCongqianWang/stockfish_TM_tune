@@ -15,6 +15,7 @@ import sys
 import time
 
 from bootstrap import ROOT, setup, sha256
+from resources import confine, training_workers
 
 
 def save(path, data):
@@ -101,7 +102,7 @@ def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, ver
             'nps=true', 'timeleft=true', 'latency=true',
             '-config', 'outname=fastchess.json', '-autosaveinterval', '0',
             '-output', 'format=fastchess', '-report', 'penta=true']
-    identity = {'command': cmd, 'binaries': env['binary_sha256'], 'book': sha256(book)}
+    identity = {'cpu_affinity': sorted(os.sched_getaffinity(0)), 'command': cmd, 'binaries': env['binary_sha256'], 'book': sha256(book)}
     if (folder / 'result.json').exists():
         result = json.loads((folder / 'result.json').read_text())
         if result['identity'] != identity:
@@ -141,7 +142,9 @@ def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, ver
     if code:
         raise RuntimeError(f'fastchess exited {code}; inspect {folder / "fastchess.log"}')
     result = read_stats(folder / 'fastchess.json', pairs)
-    result.update(identity=identity, elapsed_seconds=time.monotonic()-start, tc=tc)
+    result.update(identity=identity, elapsed_seconds=time.monotonic()-start, tc=tc,
+                  workers=workers or cfg['effective_workers'],
+                  oversubscription=(workers or cfg['effective_workers']) / cfg['workers'])
     # Cross-check games in the PGN, and reject infrastructure failures, never time losses.
     pgn = (folder / 'games.pgn').read_text()
     if len(re.findall(r'^\[Result "(?:1-0|0-1|1/2-1/2)"\]', pgn, re.M)) != 2 * pairs:
@@ -184,7 +187,9 @@ def validate_config(cfg):
         raise ValueError('Use an even number of iterations >= 2 for midpoint verification')
     if not 1 <= cfg['workers'] <= cfg['max_workers'] or not 1 <= cfg['oversubscription'] <= 2:
         raise ValueError('Invalid worker count or oversubscription (supported range 1..2)')
-    cfg['effective_workers'] = min(cfg['max_workers'], max(1, round(cfg['workers'] * cfg['oversubscription'])))
+    if cfg.get('physical_cores', cfg['workers']) < 1:
+        raise ValueError('Physical-core cap must be positive')
+    cfg['effective_workers'] = min(cfg['max_workers'], math.floor(cfg['workers'] * cfg['oversubscription']))
     if cfg['verification_total_pairs'] < 2 * len(cfg['strata']):
         raise ValueError('Verification budget must include every TC at both checkpoints')
     if any(cfg['spsa'][k] <= 0 for k in ('perturbation', 'learning_rate', 'max_step')):
@@ -272,10 +277,17 @@ def run(out, cfg, env):
                 seed = cfg['seed'] + iteration * 10000 + i
                 cell = folder / stratum['id']
                 cell.mkdir(exist_ok=True)
+                workers = training_workers(cfg, iteration, i)
+                # At least two waves of games so requested concurrency can actually
+                # be reached. Fastchess naturally has a less-loaded tail at the end.
+                pairs = (max(stratum['pairs'], workers) if cfg['effective_workers'] > cfg['workers']
+                         else stratum['pairs'])
+                save(cell / 'load.json', {'workers': workers, 'pairs': pairs,
+                                          'oversubscription': workers / cfg['workers']})
                 signal_value = 0.0
                 if cfg['mix']['self']:
-                    result = run_match(cell / 'self', env, cfg, stratum['tc'], stratum['pairs'],
-                                       plus, minus, seed, out / 'training.epd')
+                    result = run_match(cell / 'self', env, cfg, stratum['tc'], pairs,
+                                       plus, minus, seed, out / 'training.epd', workers=workers)
                     signal_value += cfg['mix']['self'] * (result['score'] - .5)
                 if cfg['mix']['master']:
                     master_scores = {}
@@ -284,11 +296,12 @@ def run(out, cfg, env):
                     if iteration % 2:
                         order.reverse()
                     for name, opts in order:
-                        master_scores[name] = run_match(cell / name, env, cfg, stratum['tc'], stratum['pairs'],
-                                                        opts, {}, seed, out / 'training.epd', True)['score']
+                        master_scores[name] = run_match(cell / name, env, cfg, stratum['tc'], pairs,
+                                                        opts, {}, seed, out / 'training.epd', True, workers=workers)['score']
                     signal_value += cfg['mix']['master'] * (master_scores['plus-master'] - master_scores['minus-master'])
                 response += stratum['weight'] * signal_value / sum(s['weight'] for s in cfg['strata'])
-                cells.append({'stratum': stratum['id'], 'response': signal_value})
+                cells.append({'stratum': stratum['id'], 'response': signal_value,
+                              'workers': workers, 'pairs': pairs})
             state['theta'] = update(theta, active, plus, minus, response, iteration, cfg)
             state['iteration'] = iteration
             state['history'].append({'iteration': iteration, 'response': response, 'strata': cells,
@@ -315,7 +328,9 @@ def main():
     parser.add_argument('--config', default='configs/kaggle.json')
     parser.add_argument('--output', default='runs/kaggle')
     parser.add_argument('--workers', type=int)
-    parser.add_argument('--oversubscription', type=float)
+    parser.add_argument('--oversubscription', type=float, help='Maximum training load, varied from 1x up to this value')
+    parser.add_argument('--physical-cores', type=int, help='Maximum physical cores; SMT siblings are excluded')
+    parser.add_argument('--cpus', help='Restrict selection to assigned Linux CPU IDs, e.g. 0-7,16-23')
     parser.add_argument('--build-jobs', type=int, default=2)
     parser.add_argument('--arch', default='native')
     parser.add_argument('--setup-only', action='store_true')
@@ -329,7 +344,10 @@ def main():
         cfg['workers'] = args.workers
     if args.oversubscription is not None:
         cfg['oversubscription'] = args.oversubscription
+    if args.physical_cores is not None:
+        cfg['physical_cores'] = args.physical_cores
     validate_config(cfg)
+    cpu_affinity = confine(cfg, args.cpus)
     out = (ROOT / args.output).resolve()
     out.mkdir(parents=True, exist_ok=True)
     with open(out / '.lock', 'w') as lock:
@@ -343,7 +361,8 @@ def main():
         if all(overrides):
             env = dict(zip(('candidate', 'baseline', 'fastchess', 'book'), [str(Path(v).resolve()) for v in overrides]))
         else:
-            env = setup(args.build_jobs, args.arch)
+            env = setup(min(args.build_jobs, len(cpu_affinity)), args.arch)
+        env['cpu_affinity'] = cpu_affinity
         env['binary_sha256'] = {k: sha256(env[k]) for k in ('candidate', 'baseline', 'fastchess')}
         env['book_sha256'] = sha256(env['book'])
         manifest = {'config': cfg, 'environment': env,

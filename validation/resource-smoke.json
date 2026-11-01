@@ -1,0 +1,14 @@
+{
+  "purpose": "Resource-confinement and variable-load integration check, not strength evidence.",
+  "python_tests_passed": 12,
+  "physical_cores": 1,
+  "training_concurrency_by_iteration": [
+    1,
+    2
+  ],
+  "same_load_for_all_match_types": true,
+  "verification_concurrency": 1,
+  "games": 22,
+  "all_fastchess_match_identities_share_selected_affinity": true,
+  "inherited_child_affinity_test_passed": true
+}

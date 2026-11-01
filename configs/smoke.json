@@ -26,5 +26,6 @@
       "pairs": 1,
       "weight": 1
     }
-  ]
+  ],
+  "physical_cores": 2
 }

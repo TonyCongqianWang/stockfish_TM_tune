@@ -37,7 +37,9 @@ iterations and **eight pairs / sixteen games total**.
 ./run.sh --config configs/cluster.json --output runs/cluster --build-jobs 2
 ```
 
-This exploratory preset uses 16 concurrent games, 400 SPSA iterations, and 20 TCs:
+This exploratory preset confines all child processes to at most 16 physical cores
+(one hardware thread each), varies training concurrency from 16 to 32 games, and
+uses 400 SPSA iterations and 20 TCs:
 base times 1.5, 3, 10, and 30 seconds crossed with increment ratios 0%, 0.5%, 1%,
 2%, and 4%. Thus 30+0.3 is included, along with 30+0 and 30+1.2.
 The preset has **30,000 verification pairs across both checkpoints and all TCs**:
@@ -46,21 +48,54 @@ Set `verification_total_pairs` to 60000 if you want 30,000 at each checkpoint.
 These are fixed-size tournaments against the pinned upstream master, not SPRTs.
 Validation uses nominal worker count, without oversubscription.
 
-Training pairs per TC per iteration are 32 / 24 / 16 / 8 for bases
-1.5 / 3 / 10 / 30. With both match types, that is 1,200 pairs per iteration,
-480,000 training pairs in the preset. These batch sizes and SPSA gains are starting
+Minimum training pairs per TC per iteration are 32 / 24 / 16 / 8 for bases
+1.5 / 3 / 10 / 30. With load variation enabled, each batch is enlarged to at least
+as many pairs as concurrent games (two waves), so the chosen concurrency can
+actually be reached. Actual pair counts therefore depend on the load schedule. These batch sizes and SPSA gains are starting
 values, **not variance-calibrated recommendations**. Benchmark a pilot before a
 full cluster run; the Kaggle run only verifies orchestration.
 
 ```bash
-# Explicit stress experiment; keep separate from your nominal-speed run.
-./run.sh --config configs/cluster.json --output runs/cluster-2x --oversubscription 2
+# Nominal-speed comparison: turn load variation off.
+./run.sh --config configs/cluster.json --output runs/cluster-1x --oversubscription 1
 ```
 
-Oversubscription permits up to 32 concurrent games on the 16-worker preset. It
-changes scheduling latency and playing conditions as well as NPS. It is not a
-clean equivalent of slower hardware. The runner records the setting; do not mix
-such conditions silently or compare their raw scores as if the conditions matched.
+`--oversubscription` is a **maximum**, not a fixed load. Each shuffled block
+visits every integer concurrency between the nominal worker count and that maximum
+once. The deterministic schedule varies by iteration and TC; self-play and both
+master perturbations within the same cell use identical concurrency and pair counts.
+Verification stays at nominal concurrency. The end of each fastchess match has a
+naturally less-loaded tail, so this is approximate speed diversity, not a precise
+CPU-speed emulator. Logs retain the chosen load and measured NPS.
+
+### Physical-core confinement
+
+```bash
+./run.sh --config configs/cluster.json --output runs/cluster \
+  --physical-cores 16 --oversubscription 2
+# If the scheduler assigned specific Linux CPU IDs, restrict selection explicitly:
+./run.sh --config configs/cluster.json --output runs/assigned \
+  --physical-cores 16 --cpus 0-15 --oversubscription 2
+```
+
+The runner intersects selection with its existing scheduler/affinity allocation,
+reads Linux package/core topology, selects one allowed logical CPU per physical
+core, and sets affinity **before fetching/building engines or launching matches**. Setup, fastchess,
+engines, and descendants inherit that mask. It never expands the existing mask.
+If fewer cores are available, nominal and maximum concurrency shrink accordingly.
+Topology lookup failures stop setup instead of silently treating SMT threads as
+physical cores. The default cap is 16 for cluster and two for Kaggle/smoke.
+For a two-worker Kaggle load-variation test, `--physical-cores 1 --oversubscription 2`
+varies one or two concurrent games on one selected physical core.
+`--cpus` is an optional list of **Linux logical CPU IDs**, not physical core numbers;
+SMT siblings in the list are still deduplicated. Actual IDs are printed and saved
+in the manifest and match identity, and resume requires the same mask.
+
+Affinity limits where this run executes; it does not reserve those cores or stop
+other jobs from sharing them. Use your scheduler's allocated CPU set (or explicitly
+assigned `--cpus`) to avoid interference with other work. Oversubscription changes
+scheduling latency as well as NPS; inspect measured behavior rather than assuming
+2x concurrency means exactly half-speed workers.
 
 ## Objective and SPSA
 
