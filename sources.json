@@ -1,0 +1,9 @@
+{
+  "engine_repo": "https://github.com/TonyCongqianWang/Stockfish.git",
+  "engine_ref": "240fb91c36b809facdbde3e8e71ba5f5f1fc8454",
+  "baseline_ref": "ff7cee4244ec96ea488c402669e3674c0574dce6",
+  "fastchess_repo": "https://github.com/Disservin/fastchess.git",
+  "fastchess_ref": "ebfd64cb7fac80d4822c50b07dca4fe934779d21",
+  "book_url": "https://raw.githubusercontent.com/official-stockfish/books/a804a97e709f40aa75a00f9d19e84915b7a3a45c/UHO_4060_v4.epd.zip",
+  "book_sha256": "a97424c5b98b42f8c27ff450f0681ad11696148548c975752350e98417ead11d"
+}

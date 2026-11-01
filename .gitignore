@@ -1,0 +1,8 @@
+/engine/
+/fastchess/
+/.venv/
+/.deps/
+/.cache/
+/runs/
+__pycache__/
+*.pyc

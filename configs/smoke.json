@@ -1,0 +1,30 @@
+{
+  "iterations": 2,
+  "workers": 2,
+  "max_workers": 2,
+  "oversubscription": 1,
+  "hash_mb": 16,
+  "move_overhead_ms": 10,
+  "seed": 20261101,
+  "mix": {
+    "self": 0.5,
+    "master": 0.5
+  },
+  "verification_total_pairs": 2,
+  "spsa": {
+    "perturbation": 0.05,
+    "gamma": 0.101,
+    "alpha": 0.602,
+    "learning_rate": 0.01,
+    "stability": 10,
+    "max_step": 0.02
+  },
+  "strata": [
+    {
+      "id": "inc-fast",
+      "tc": "1.5+0.015",
+      "pairs": 1,
+      "weight": 1
+    }
+  ]
+}

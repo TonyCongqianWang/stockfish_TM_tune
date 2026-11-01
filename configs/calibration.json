@@ -1,0 +1,16 @@
+{
+  "grid": "4 bases x 5 increment ratios x 7 phase/clock states; overhead 10ms",
+  "parameters": {
+    "TMBankRate": 1282,
+    "TMIncRate": 1235,
+    "TMOpeningFloor": 787,
+    "TMOpeningPlies": 5637
+  },
+  "rms_log_error": 0.28995470872636697,
+  "ratio_p10_p50_p90": [
+    0.7120557261203063,
+    0.9600591418238638,
+    1.3748132223940355
+  ],
+  "limitation": "Synthetic states and nominal budgets only; no strength evidence."
+}

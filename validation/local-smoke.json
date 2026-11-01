@@ -1,0 +1,31 @@
+{
+  "purpose": "Integration validation only; no Elo or tuning-quality conclusion.",
+  "candidate_commit": "240fb91c36b809facdbde3e8e71ba5f5f1fc8454",
+  "baseline_commit": "ff7cee4244ec96ea488c402669e3674c0574dce6",
+  "fastchess_commit": "ebfd64cb7fac80d4822c50b07dca4fe934779d21",
+  "config": "configs/smoke.json",
+  "workers": 2,
+  "iterations": 2,
+  "completed_matches": 8,
+  "completed_pairs": 8,
+  "completed_games": 16,
+  "verification_pairs": 2,
+  "move_records_aggregated": 1730,
+  "checks": {
+    "eight_python_tests": true,
+    "compiled_time_management_invariants": true,
+    "sudden_death_increment_cyclic_and_nodestime_uci": true,
+    "fixed_depth_bench_nodes_candidate": 110007,
+    "fixed_depth_bench_nodes_master": 110007,
+    "sigterm_exit_code": 130,
+    "interrupted_match_resumed": true,
+    "completed_resume_replayed_no_matches": true,
+    "pgn_compression_and_reentrant_summary": true,
+    "fresh_download_and_build_entry_point": true
+  },
+  "limitations": [
+    "Executed locally, not on Kaggle or the cluster.",
+    "SPSA gains and cluster batch sizes need pilot calibration.",
+    "The full 72-game Kaggle preset and long verification tournaments were not run."
+  ]
+}
