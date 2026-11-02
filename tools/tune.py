@@ -264,7 +264,10 @@ def run(out, cfg, env):
     else:
         state = {'iteration': 0, 'theta': {k: (s['default'] - s['min']) / (s['max'] - s['min']) for k, s in active.items()}, 'history': []}
         save(state_path, state)
-    if cfg.get('async_spsa', {}).get('enabled'):\n        from async_tune import run_async\n        return run_async(out, cfg, env, specs, active)\n    for iteration in range(1, cfg['iterations'] + 1):
+    if cfg.get('async_spsa', {}).get('enabled'):
+        from async_tune import run_async
+        return run_async(out, cfg, env, specs, active)
+    for iteration in range(1, cfg['iterations'] + 1):
         # Verification is independently resumable, including a stop just after an update.
         if iteration > state['iteration']:
             theta = state['theta']
