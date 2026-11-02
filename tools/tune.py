@@ -120,7 +120,8 @@ def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, ver
     print(f"  {folder.name}: {tc}, {pairs} pairs, {'master' if versus_master else 'self'}, {workers or cfg['effective_workers']} workers", flush=True)
     start = time.monotonic()
     with open(folder / 'fastchess.log', 'w') as log:
-        proc = subprocess.Popen(cmd, cwd=folder, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,\n                                    preexec_fn=(lambda: os.sched_setaffinity(0, cpus)) if cpus else None)
+        proc = subprocess.Popen(cmd, cwd=folder, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                                    preexec_fn=(lambda: os.sched_setaffinity(0, cpus)) if cpus else None)
         try:
             while True:
                 try:
