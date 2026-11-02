@@ -84,7 +84,7 @@ def read_stats(path, expected_pairs):
     return result
 
 
-def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, versus_master=False, workers=None):
+def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, versus_master=False, workers=None, cpus=None):
     folder.mkdir(parents=True, exist_ok=True)
     engine_b = env['baseline'] if versus_master else env['candidate']
     cmd = [env['fastchess'], '-engine', f"cmd={env['candidate']}", 'name=A']
@@ -102,7 +102,7 @@ def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, ver
             'nps=true', 'timeleft=true', 'latency=true',
             '-config', 'outname=fastchess.json', '-autosaveinterval', '0',
             '-output', 'format=fastchess', '-report', 'penta=true']
-    identity = {'cpu_affinity': sorted(os.sched_getaffinity(0)), 'command': cmd, 'binaries': env['binary_sha256'], 'book': sha256(book)}
+    identity = {'cpu_affinity': sorted(cpus if cpus is not None else os.sched_getaffinity(0)), 'command': cmd, 'binaries': env['binary_sha256'], 'book': sha256(book)}
     if (folder / 'result.json').exists():
         result = json.loads((folder / 'result.json').read_text())
         if result['identity'] != identity:
@@ -120,7 +120,7 @@ def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, ver
     print(f"  {folder.name}: {tc}, {pairs} pairs, {'master' if versus_master else 'self'}, {workers or cfg['effective_workers']} workers", flush=True)
     start = time.monotonic()
     with open(folder / 'fastchess.log', 'w') as log:
-        proc = subprocess.Popen(cmd, cwd=folder, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        proc = subprocess.Popen(cmd, cwd=folder, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,\n                                    preexec_fn=(lambda: os.sched_setaffinity(0, cpus)) if cpus else None)
         try:
             while True:
                 try:
@@ -263,7 +263,7 @@ def run(out, cfg, env):
     else:
         state = {'iteration': 0, 'theta': {k: (s['default'] - s['min']) / (s['max'] - s['min']) for k, s in active.items()}, 'history': []}
         save(state_path, state)
-    for iteration in range(1, cfg['iterations'] + 1):
+    if cfg.get('async_spsa', {}).get('enabled'):\n        from async_tune import run_async\n        return run_async(out, cfg, env, specs, active)\n    for iteration in range(1, cfg['iterations'] + 1):
         # Verification is independently resumable, including a stop just after an update.
         if iteration > state['iteration']:
             theta = state['theta']
