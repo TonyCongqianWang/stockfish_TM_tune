@@ -377,8 +377,12 @@ def main():
                     'platform': platform.platform(), 'sources': json.loads((ROOT / 'sources.json').read_text())}
         if (out / 'manifest.json').exists():
             old = json.loads((out / 'manifest.json').read_text())
-            if old['config'] != cfg or old['environment'] != env or old.get('pipeline_sha256') != manifest['pipeline_sha256']:
-                raise ValueError('Resume requires identical configuration, scripts, binaries, and opening book; use a new --output')
+            mismatches = [key for key in ('config', 'environment', 'pipeline_sha256')
+                          if old.get(key) != manifest.get(key)]
+            if mismatches:
+                raise ValueError(f"Resume manifest mismatch in {', '.join(mismatches)} at {out}. "
+                                 "Use a genuinely new --output directory or restore the "
+                                 "original config/scripts/binaries/book for this run.")
         else:
             save(out / 'manifest.json', manifest)
             split_book(env['book'], out, cfg['seed'])
