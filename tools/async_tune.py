@@ -24,8 +24,9 @@ def directions(names, seed):
     columns += [tuple(rng.choice((-1, 1)) for _ in range(4))
                 for _ in range(len(names) % 4)]
     rng.shuffle(columns)
-    columns = [tuple(v * rng.choice((-1, 1)) for v in column)
-               for column in columns]
+    columns = [tuple(v * sign for v in column)
+               for column in columns
+               for sign in [rng.choice((-1, 1))]]
     return [{name: columns[j][i] for j, name in enumerate(names)}
             for i in range(4)]
 
