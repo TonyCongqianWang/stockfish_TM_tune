@@ -155,6 +155,9 @@ def run_async(out, cfg, env, specs, active):
     ready = {}
     with ThreadPoolExecutor(max_workers=2) as pool:
         while state['iteration'] < target:
+            if (state['iteration'] in checkpoints and not state['inflight']
+                    and not (out / f"verify-{state['iteration']:06d}" / 'summary.json').exists()):
+                verify(out, state['iteration'], state['theta'], active, env, cfg)
             # Recreate any launched-but-unapplied experiments after interruption.
             occupied = {meta['lane'] for meta in state['inflight'].values()}
             for key, meta in list(state['inflight'].items()):
@@ -177,7 +180,9 @@ def run_async(out, cfg, env, specs, active):
                 running[ordinal] = pool.submit(evaluate, out, cfg, env, meta, lanes[free])
                 occupied.add(free)
             if running:
-                done, _ = wait(list(running.values()), return_when=FIRST_COMPLETED)
+                done = {f for f in running.values() if f.done()}
+                if not done and not ready:
+                    done, _ = wait(list(running.values()), return_when=FIRST_COMPLETED)
                 for ordinal, future in list(running.items()):
                     if future in done:
                         ready[ordinal] = future.result()
@@ -199,7 +204,9 @@ def run_async(out, cfg, env, specs, active):
                                  key=lambda k: state['inflight'][k]['base_version'])
                     if int(oldest) != ordinal:
                         break
-                grad = gradient(meta, ready.pop(ordinal))
+                responses = ready.pop(ordinal)
+                grad = gradient(meta, responses)
+                mean_response = sum(responses) / len(responses)
                 old = state['theta']
                 new, move = apply(old, active, grad, cfg, state['iteration']+1,
                                   state['initial_theta'], state['cumulative_l2'])
@@ -207,15 +214,17 @@ def run_async(out, cfg, env, specs, active):
                 state['iteration'] += 1
                 state['history'].append({'iteration': state['iteration'],
                     'experiment': ordinal, 'objective': meta['objective'], 'tc': meta['tc_id'],
-                    'load': meta['load'], 'lag': lag, 'movement': move,
+                    'load': meta['load'], 'lag': lag, 'response': mean_response, 'movement': move,
                     'parameters': integer_options(new, active)})
                 del state['inflight'][str(ordinal)]
                 save(state_file, state)
                 save(out / 'current-options.json', integer_options(new, active))
                 print(f"Update {state['iteration']}/{target} "
                       f"TC={meta['tc_id']} {meta['objective']} load={meta['load']} "
-                      f"age={lag} step_L2={move['step_l2']:.6f} "
+                      f"age={lag} response={mean_response:+.6f} step_L1={move['step_l1']:.6f} "
+                      f"step_L2={move['step_l2']:.6f} "
                       f"net_L2={move['net_l2']:.6f} path_L2={move['cumulative_l2']:.6f} "
+                      f"max_step={move['max_coordinate']:.6f} "
                       f"changed_UCI={move['changed_uci']}/{len(new)}", flush=True)
                 if state['iteration'] in checkpoints:
                     # At the checkpoint all earlier experiments have been issued.
