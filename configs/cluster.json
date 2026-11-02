@@ -1,5 +1,5 @@
 {
-  "iterations": 1000,
+  "iterations": 50,
   "workers": 16,
   "max_workers": 32,
   "oversubscription": 2,
@@ -141,5 +141,14 @@
       "weight": 1
     }
   ],
-  "physical_cores": 16
+  "physical_cores": 16,
+  "async_spsa": {
+    "enabled": true,
+    "loads": [
+      8,
+      12,
+      16
+    ],
+    "max_staleness": 4
+  }
 }
