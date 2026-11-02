@@ -258,15 +258,17 @@ def run(out, cfg, env):
                                  'inactive': sorted(set(specs) - set(active))})
     if not active:
         raise ValueError('No active TM parameters')
+    if cfg.get('async_spsa', {}).get('enabled'):
+        # The async runner owns its own state format. Never initialize a
+        # synchronous state.json before dispatching to it.
+        from async_tune import run_async
+        return run_async(out, cfg, env, specs, active)
     state_path = out / 'state.json'
     if state_path.exists():
         state = json.loads(state_path.read_text())
     else:
         state = {'iteration': 0, 'theta': {k: (s['default'] - s['min']) / (s['max'] - s['min']) for k, s in active.items()}, 'history': []}
         save(state_path, state)
-    if cfg.get('async_spsa', {}).get('enabled'):
-        from async_tune import run_async
-        return run_async(out, cfg, env, specs, active)
     for iteration in range(1, cfg['iterations'] + 1):
         # Verification is independently resumable, including a stop just after an update.
         if iteration > state['iteration']:
