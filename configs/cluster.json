@@ -10,7 +10,7 @@
     "self": 0.5,
     "master": 0.5
   },
-  "verification_total_pairs": 8000,
+  "verification_total_pairs": 80,
   "spsa": {
     "perturbation": 0.05,
     "gamma": 0.101,
