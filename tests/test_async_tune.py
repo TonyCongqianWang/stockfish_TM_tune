@@ -4,12 +4,27 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from async_tune import directions, schedule, create_experiment, gradient, apply
 
 
 class AsyncTuneTests(unittest.TestCase):
+    def test_fresh_async_run_does_not_create_sync_state(self):
+        from tune import run
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            cfg = {'strata': [{'tc': '1.5+0'}],
+                   'async_spsa': {'enabled': True}}
+            specs = {'TMTest': {'min': 0, 'max': 100, 'default': 50}}
+            with patch('tune.options', return_value=specs):
+                with patch('async_tune.run_async', return_value='async-called') as runner:
+                    result = run(out, cfg, {'candidate': 'candidate', 'baseline': 'baseline'})
+            self.assertEqual(result, 'async-called')
+            self.assertFalse((out / 'state.json').exists())
+            runner.assert_called_once()
+
     def test_hypercube_near_orthogonal(self):
         names = [f'p{i}' for i in range(37)]
         vectors = directions(names, 123)
