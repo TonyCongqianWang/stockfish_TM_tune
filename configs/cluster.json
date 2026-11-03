@@ -1,5 +1,5 @@
 {
-  "iterations": 1000,
+  "iterations": 50,
   "workers": 16,
   "max_workers": 32,
   "oversubscription": 2,
@@ -10,7 +10,7 @@
     "self": 0.5,
     "master": 0.5
   },
-  "verification_total_pairs": 8000,
+  "verification_total_pairs": 80,
   "spsa": {
     "perturbation": 0.05,
     "gamma": 0.101,
@@ -141,5 +141,14 @@
       "weight": 1
     }
   ],
-  "physical_cores": 16
+  "physical_cores": 16,
+  "async_spsa": {
+    "enabled": true,
+    "loads": [
+      8,
+      12,
+      16
+    ],
+    "max_staleness": 4
+  }
 }

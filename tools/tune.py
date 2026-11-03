@@ -84,7 +84,7 @@ def read_stats(path, expected_pairs):
     return result
 
 
-def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, versus_master=False, workers=None):
+def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, versus_master=False, workers=None, cpus=None):
     folder.mkdir(parents=True, exist_ok=True)
     engine_b = env['baseline'] if versus_master else env['candidate']
     cmd = [env['fastchess'], '-engine', f"cmd={env['candidate']}", 'name=A']
@@ -102,7 +102,7 @@ def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, ver
             'nps=true', 'timeleft=true', 'latency=true',
             '-config', 'outname=fastchess.json', '-autosaveinterval', '0',
             '-output', 'format=fastchess', '-report', 'penta=true']
-    identity = {'cpu_affinity': sorted(os.sched_getaffinity(0)), 'command': cmd, 'binaries': env['binary_sha256'], 'book': sha256(book)}
+    identity = {'cpu_affinity': sorted(cpus if cpus is not None else os.sched_getaffinity(0)), 'command': cmd, 'binaries': env['binary_sha256'], 'book': sha256(book)}
     if (folder / 'result.json').exists():
         result = json.loads((folder / 'result.json').read_text())
         if result['identity'] != identity:
@@ -120,7 +120,8 @@ def run_match(folder, env, cfg, tc, pairs, a_options, b_options, seed, book, ver
     print(f"  {folder.name}: {tc}, {pairs} pairs, {'master' if versus_master else 'self'}, {workers or cfg['effective_workers']} workers", flush=True)
     start = time.monotonic()
     with open(folder / 'fastchess.log', 'w') as log:
-        proc = subprocess.Popen(cmd, cwd=folder, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        proc = subprocess.Popen(cmd, cwd=folder, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                                    preexec_fn=(lambda: os.sched_setaffinity(0, cpus)) if cpus else None)
         try:
             while True:
                 try:
@@ -257,6 +258,11 @@ def run(out, cfg, env):
                                  'inactive': sorted(set(specs) - set(active))})
     if not active:
         raise ValueError('No active TM parameters')
+    if cfg.get('async_spsa', {}).get('enabled'):
+        # The async runner owns its own state format. Never initialize a
+        # synchronous state.json before dispatching to it.
+        from async_tune import run_async
+        return run_async(out, cfg, env, specs, active)
     state_path = out / 'state.json'
     if state_path.exists():
         state = json.loads(state_path.read_text())
@@ -371,8 +377,12 @@ def main():
                     'platform': platform.platform(), 'sources': json.loads((ROOT / 'sources.json').read_text())}
         if (out / 'manifest.json').exists():
             old = json.loads((out / 'manifest.json').read_text())
-            if old['config'] != cfg or old['environment'] != env or old.get('pipeline_sha256') != manifest['pipeline_sha256']:
-                raise ValueError('Resume requires identical configuration, scripts, binaries, and opening book; use a new --output')
+            mismatches = [key for key in ('config', 'environment', 'pipeline_sha256')
+                          if old.get(key) != manifest.get(key)]
+            if mismatches:
+                raise ValueError(f"Resume manifest mismatch in {', '.join(mismatches)} at {out}. "
+                                 "Use a genuinely new --output directory or restore the "
+                                 "original config/scripts/binaries/book for this run.")
         else:
             save(out / 'manifest.json', manifest)
             split_book(env['book'], out, cfg['seed'])
