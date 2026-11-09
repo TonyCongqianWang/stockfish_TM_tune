@@ -63,7 +63,7 @@ def setup(jobs=2, arch='native'):
         if not (path / '.git').exists():
             command(['git', 'clone', '--no-checkout', '--filter=blob:none', repo, path])
         revisions[name] = checkout(repo, ref, path)
-        executable = path / ('fastchess' if name == 'fastchess' else 'src/stockfish')
+        executable = path / ('fastchess' if name == 'fastchess' else 'src/femmaster')
         stamp = path / '.tm-build.json'
         fingerprint = {'revision': revisions[name], 'arch': arch,
                        'machine': os.uname().machine,
@@ -78,6 +78,7 @@ def setup(jobs=2, arch='native'):
                         shutil.copy2(net, path / 'src' / net.name)
                 command(['make', 'objclean'], path / 'src')
                 command(['make', f'-j{jobs}', 'build', f'ARCH={arch}'], path / 'src')
+                command(['mv', path / 'src/stockfish', executable])
             stamp.write_text(json.dumps(fingerprint))
     archive = cache / 'book.zip'
     if not archive.exists() or sha256(archive) != source['book_sha256']:
@@ -94,7 +95,7 @@ def setup(jobs=2, arch='native'):
             raise ValueError('Expected one EPD in opening archive')
         with bundle.open(names[0]) as inp, open(book, 'wb') as out:
             shutil.copyfileobj(inp, out)
-    return {'candidate': str(cache / 'candidate/src/stockfish'),
-            'baseline': str(cache / 'baseline/src/stockfish'),
+    return {'candidate': str(cache / 'candidate/src/femmaster'),
+            'baseline': str(cache / 'baseline/src/femmaster'),
             'fastchess': str(cache / 'fastchess/fastchess'), 'book': str(book),
             'revisions': revisions, 'book_sha256': sha256(book), 'arch': arch}
