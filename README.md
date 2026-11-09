@@ -31,6 +31,36 @@ iterations and **eight pairs / sixteen games total**.
 ./run.sh --config configs/smoke.json --output runs/smoke
 ```
 
+## Asynchronous orthogonal SPSA pilot
+
+The cluster preset is now a 50-update asynchronous integration pilot. It launches
+two simultaneous experiments pinned to distinct eight-physical-core CPU sets.
+Each experiment contains 16 games / eight color-reversed opening pairs.
+Four parallel fastchess matches each use concurrency 2, 3, or 4, yielding
+8, 12, or 16 simultaneous games per lane. The total CPU affinity remains
+limited to sixteen physical cores.
+
+A deterministic shuffled cycle includes every combination of configured TC,
+self-play or candidate-vs-master objective, and game load (8/12/16). Four
+randomized nearly orthogonal hypercube directions are used for self-play;
+candidate-vs-master uses two directions, each evaluated at plus and minus.
+Every completed experiment contributes one optimizer update, using the parameter
+snapshot captured at dispatch. Gradients can be applied out of launch order,
+but the scheduler waits before exceeding four applied-update versions of
+staleness. Experiments are retained on disk for deterministic replay of
+completed matches and recovery of pending experiments.
+
+The update log includes perturbation response, gradient age, normalized
+L1/L2 step lengths, cumulative L2 path, net L2 displacement from initial
+parameters, maximum coordinate movement and number of changed UCI parameters.
+The 50-update pilot has 800 training games; it retains small verification
+checkpoints at updates 25 and 50 (80 verification pairs total). Those
+verification results are wiring checks, **not strength measurements**.
+
+The new path is enabled by `async_spsa.enabled` in `configs/cluster.json`.
+Other presets continue to use the original synchronous algorithm. The async
+configuration currently requires exactly 16 selectable physical cores.
+
 ## Cluster preset
 
 ```bash
