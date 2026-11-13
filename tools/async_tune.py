@@ -54,7 +54,7 @@ def create_experiment(out, cfg, specs, theta, version, ordinal, lane):
             raise ValueError('Experiment identity mismatch')
         return meta
     c = cfg['spsa']['perturbation'] / (ordinal + 1) ** cfg['spsa']['gamma']
-    widths = perturbation_widths(theta, ordinal + 1, cfg)
+    widths = perturbation_widths(specs, ordinal + 1, cfg)
     overrides = cfg['spsa'].get('parameter_overrides', {})
     vectors = directions(list(theta), cfg['seed'] + 92000011 + ordinal)
     sampled = []

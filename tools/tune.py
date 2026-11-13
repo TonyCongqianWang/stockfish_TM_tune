@@ -160,17 +160,23 @@ def integer_options(theta, specs):
     return {k: round(specs[k]['min'] + v * (specs[k]['max'] - specs[k]['min'])) for k, v in theta.items()}
 
 
-def perturbation_widths(names, iteration, cfg):
+def perturbation_widths(specs, iteration, cfg):
     schedule = cfg['spsa']
     decay = iteration ** schedule['gamma']
     overrides = schedule.get('parameter_overrides', {})
-    return {name: overrides.get(name, {}).get('perturbation', schedule['perturbation']) / decay
-            for name in names}
+    widths = {}
+    for name, spec in specs.items():
+        override = overrides.get(name, {})
+        width = override.get('perturbation', schedule['perturbation'])
+        if 'perturbation_uci' in override:
+            width = override['perturbation_uci'] / (spec['max'] - spec['min'])
+        widths[name] = width / decay
+    return widths
 
 
 def perturb(theta, specs, iteration, cfg):
     rng = random.Random(cfg['seed'] + iteration * 1000003)
-    widths = perturbation_widths(theta, iteration, cfg)
+    widths = perturbation_widths(specs, iteration, cfg)
     plus, minus = {}, {}
     for k, value in theta.items():
         sign = rng.choice((-1, 1))
@@ -206,8 +212,9 @@ def validate_config(cfg):
         raise ValueError('Initial verification budget must include every TC')
     sweep = cfg.get('eval_base_sweep')
     if sweep and (sweep['pairs_per_value'] < len(cfg['strata']) or not sweep['values']
-                  or len(set(sweep['values'])) != len(sweep['values'])):
-        raise ValueError('Use distinct sweep values and enough pairs for every TC')
+                  or len(set(sweep['values'])) != len(sweep['values'])
+                  or type(sweep.get('range_factor', 4)) is not int or sweep.get('range_factor', 4) < 2):
+        raise ValueError('Use distinct sweep values, enough pairs for every TC and an integer range factor >= 2')
     if any(cfg['spsa'][k] <= 0 for k in ('perturbation', 'learning_rate', 'max_step')):
         raise ValueError('SPSA perturbation, learning rate and max step must be positive')
     if cfg['spsa']['stability'] < 0 or cfg['hash_mb'] < 1 or cfg['move_overhead_ms'] < 0:
@@ -278,7 +285,8 @@ def initial_tuning_specs(out, active, env, cfg):
         high = override.get('max', uci['max'])
         default = configured.get(name, uci['default'])
         if (not uci['min'] <= low < high <= uci['max'] or type(default) is not int
-                or not low <= default <= high or override.get('perturbation', 1) <= 0):
+                or not low <= default <= high or override.get('perturbation', 1) <= 0
+                or override.get('perturbation_uci', 1) <= 0):
             raise ValueError(f'Invalid tuning range, starting value or perturbation for {name}')
         specs[name] = {'min': low, 'max': high, 'default': default}
     sweep = cfg.get('eval_base_sweep')
@@ -299,9 +307,14 @@ def initial_tuning_specs(out, active, env, cfg):
             scores[value] = summary['aggregate']['weighted_score']
         # In a tie, use the first configured value.
         winner = max(scores, key=scores.__getitem__)
-        save(folder / 'summary.json', {'selected': winner, 'weighted_scores': scores})
+        factor = sweep.get('range_factor', 4)
+        spec['min'] = max(spec['min'], math.ceil(winner / factor))
+        spec['max'] = min(spec['max'], winner * factor)
         spec['default'] = winner
-        print(f'TMEvalBase sweep selected {winner} (score {scores[winner]:.4%})', flush=True)
+        save(folder / 'summary.json', {'selected': winner, 'weighted_scores': scores,
+                                       'tuning_range': [spec['min'], spec['max']]})
+        print(f"TMEvalBase sweep selected {winner} (score {scores[winner]:.4%}); "
+              f"tuning range {spec['min']}–{spec['max']}", flush=True)
     return specs
 
 

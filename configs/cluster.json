@@ -54,15 +54,16 @@
   "eval_base_sweep": {
     "values": [
       1000,
-      3000,
-      6000
+      4000,
+      10000
     ],
-    "pairs_per_value": 5000
+    "pairs_per_value": 5000,
+    "range_factor": 4
   },
   "spsa": {
     "perturbation": 0.05,
     "parameter_overrides": {
-      "TMEvalBase": {"min": 1000, "max": 6500, "perturbation": 0.025}
+      "TMEvalBase": {"perturbation_uci": 137.5}
     },
     "gamma": 0.101,
     "alpha": 0.602,

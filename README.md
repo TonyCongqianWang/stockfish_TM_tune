@@ -64,14 +64,15 @@ configuration currently requires exactly 16 selectable physical cores.
 ```
 
 The wrapper starts from the previous run's final 37 UCI settings. Before training,
-it sweeps `TMEvalBase` at 1000, 3000, and 6000 against pinned upstream master.
+it sweeps `TMEvalBase` at 1000, 4000, and 10000 against pinned upstream master.
 Each value gets 10,000 games on the same training openings and 20 time controls.
 The highest weighted score selects the initial value, with ties going to the
 first listed value. Results and the winner are saved under `sweep-eval-base/`.
 
-The cluster tuner limits `TMEvalBase` to 1000–6500 and starts with a nominal
-perturbation of ±137.5 UCI units before decay. The gradient uses the actual
-probe spacing for that parameter when rounding or clipping changes it.
+The tuner bounds `TMEvalBase` between one quarter and four times the winner,
+within the engine's UCI limits. The nominal perturbation starts at ±137.5 UCI
+units regardless of the winning value and decays on the existing schedule. The
+gradient uses the actual probe spacing after rounding and clipping.
 
 Verification runs at updates 0, 2,500, and 5,000 with **30,000 games per checkpoint**.
 The initial checkpoint tests the sweep winner before any SPSA updates. All three
