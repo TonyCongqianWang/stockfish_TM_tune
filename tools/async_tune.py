@@ -9,7 +9,7 @@ import math
 from pathlib import Path
 import random
 
-from tune import integer_options, run_match, save, verify
+from tune import integer_options, perturbation_widths, run_match, save, verify
 from summarize import summarize
 
 
@@ -54,13 +54,19 @@ def create_experiment(out, cfg, specs, theta, version, ordinal, lane):
             raise ValueError('Experiment identity mismatch')
         return meta
     c = cfg['spsa']['perturbation'] / (ordinal + 1) ** cfg['spsa']['gamma']
+    widths = perturbation_widths(theta, ordinal + 1, cfg)
+    overrides = cfg['spsa'].get('parameter_overrides', {})
     vectors = directions(list(theta), cfg['seed'] + 92000011 + ordinal)
     sampled = []
     for vector in vectors[:4 if objective == 'self' else 2]:
-        plus = {k: min(1, max(0, theta[k] + c * vector[k])) for k in theta}
-        minus = {k: min(1, max(0, theta[k] - c * vector[k])) for k in theta}
-        sampled.append({'direction': vector, 'plus': integer_options(plus, specs),
-                        'minus': integer_options(minus, specs)})
+        plus = {k: min(1, max(0, theta[k] + widths[k] * vector[k])) for k in theta}
+        minus = {k: min(1, max(0, theta[k] - widths[k] * vector[k])) for k in theta}
+        plus = integer_options(plus, specs)
+        minus = integer_options(minus, specs)
+        distances = {k: (plus[k] - minus[k]) / (specs[k]['max'] - specs[k]['min'])
+                     for k in overrides if k in theta}
+        sampled.append({'direction': vector, 'plus': plus, 'minus': minus,
+                        'distances': distances})
     meta = {'ordinal': ordinal, 'lane': lane, 'base_version': version,
             'base_theta': theta.copy(), 'tc_id': stratum_id, 'objective': objective,
             'load': load, 'c': c, 'samples': sampled}
@@ -103,7 +109,9 @@ def gradient(meta, responses):
     result = {k: 0.0 for k in meta['base_theta']}
     for sample, response in zip(meta['samples'], responses):
         for k, sign in sample['direction'].items():
-            result[k] += response * sign / (2 * meta['c'] * len(responses))
+            distance = sample.get('distances', {}).get(k, 2 * meta['c'] * sign)
+            if distance:
+                result[k] += response / (distance * len(responses))
     return result
 
 
@@ -152,6 +160,8 @@ def run_async(out, cfg, env, specs, active):
         save(state_file, state)
     target = cfg['iterations']
     checkpoints = {target // 2, target}
+    if 'initial_verification_pairs' in cfg:
+        checkpoints.add(0)
     running = {}
     ready = {}
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -234,10 +244,8 @@ def run_async(out, cfg, env, specs, active):
                         verify(out, state['iteration'], new, active, env, cfg)
                 if state['iteration'] >= target:
                     break
-            # A resumed checkpoint may require verification even if the state
-            # update was saved immediately before the verification call.
-            if (state['iteration'] in checkpoints and not state['inflight']
-                    and not (out / f"verify-{state['iteration']:06d}" / 'summary.json').exists()):
-                verify(out, state['iteration'], state['theta'], active, env, cfg)
+    # Resume can start here if the final update was saved before verification.
+    if not (out / f'verify-{target:06d}' / 'summary.json').exists():
+        verify(out, target, state['theta'], active, env, cfg)
     save(out / 'final-options.json', integer_options(state['theta'], active))
     summarize(out)

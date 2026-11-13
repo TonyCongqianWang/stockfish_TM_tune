@@ -31,9 +31,9 @@ iterations and **eight pairs / sixteen games total**.
 ./run.sh --config configs/smoke.json --output runs/smoke
 ```
 
-## Asynchronous orthogonal SPSA pilot
+## Asynchronous orthogonal SPSA
 
-The cluster preset is now a 50-update asynchronous integration pilot. It launches
+The cluster preset runs 5,000 asynchronous optimizer updates. It launches
 two simultaneous experiments pinned to distinct eight-physical-core CPU sets.
 Each experiment contains 16 games / eight color-reversed opening pairs.
 Four parallel fastchess matches each use concurrency 2, 3, or 4, yielding
@@ -53,10 +53,6 @@ completed matches and recovery of pending experiments.
 The update log includes perturbation response, gradient age, normalized
 L1/L2 step lengths, cumulative L2 path, net L2 displacement from initial
 parameters, maximum coordinate movement and number of changed UCI parameters.
-The 50-update pilot has 800 training games; it retains small verification
-checkpoints at updates 25 and 50 (80 verification pairs total). Those
-verification results are wiring checks, **not strength measurements**.
-
 The new path is enabled by `async_spsa.enabled` in `configs/cluster.json`.
 Other presets continue to use the original synchronous algorithm. The async
 configuration currently requires exactly 16 selectable physical cores.
@@ -64,39 +60,25 @@ configuration currently requires exactly 16 selectable physical cores.
 ## Cluster preset
 
 ```bash
-./run.sh --config configs/cluster.json --output runs/cluster --build-jobs 2
+./run.sh --config configs/cluster.json --output runs/cluster-warm-start --build-jobs 2
 ```
 
-This exploratory preset confines all child processes to at most 16 physical cores
-(one hardware thread each), varies training concurrency from 16 to 32 games, and
-uses 400 SPSA iterations and 20 TCs:
-base times 1.5, 3, 10, and 30 seconds crossed with increment ratios 0%, 0.5%, 1%,
-2%, and 4%. Thus 30+0.3 is included, along with 30+0 and 30+1.2.
-The preset has **30,000 verification pairs across both checkpoints and all TCs**:
-15,000 at iteration 200 and 15,000 at iteration 400, or 750 pairs per TC per check.
-Set `verification_total_pairs` to 60000 if you want 30,000 at each checkpoint.
-These are fixed-size tournaments against the pinned upstream master, not SPRTs.
-Validation uses nominal worker count, without oversubscription.
+The wrapper starts from the previous run's final 37 UCI settings. Before training,
+it sweeps `TMEvalBase` at 1000, 3000, and 6000 against pinned upstream master.
+Each value gets 10,000 games on the same training openings and 20 time controls.
+The highest weighted score selects the initial value, with ties going to the
+first listed value. Results and the winner are saved under `sweep-eval-base/`.
 
-Minimum training pairs per TC per iteration are 32 / 24 / 16 / 8 for bases
-1.5 / 3 / 10 / 30. With load variation enabled, each batch is enlarged to at least
-as many pairs as concurrent games (two waves), so the chosen concurrency can
-actually be reached. Actual pair counts therefore depend on the load schedule. These batch sizes and SPSA gains are starting
-values, **not variance-calibrated recommendations**. Benchmark a pilot before a
-full cluster run; the Kaggle run only verifies orchestration.
+The cluster tuner limits `TMEvalBase` to 1000–6500 and starts with a nominal
+perturbation of ±137.5 UCI units before decay. The gradient uses the actual
+probe spacing for that parameter when rounding or clipping changes it.
 
-```bash
-# Nominal-speed comparison: turn load variation off.
-./run.sh --config configs/cluster.json --output runs/cluster-1x --oversubscription 1
-```
-
-`--oversubscription` is a **maximum**, not a fixed load. Each shuffled block
-visits every integer concurrency between the nominal worker count and that maximum
-once. The deterministic schedule varies by iteration and TC; self-play and both
-master perturbations within the same cell use identical concurrency and pair counts.
-Verification stays at nominal concurrency. The end of each fastchess match has a
-naturally less-loaded tail, so this is approximate speed diversity, not a precise
-CPU-speed emulator. Logs retain the chosen load and measured NPS.
+Verification runs at updates 0, 2,500, and 5,000 with **30,000 games per checkpoint**.
+The initial checkpoint tests the sweep winner before any SPSA updates. All three
+use the same held-out opening seeds and nominal worker count. The separate
+`initial_verification_pairs` funds update 0. `verification_total_pairs` is split
+between the midpoint and final checkpoints. Each opening pair contains two games.
+Use a fresh output directory for this configuration.
 
 ### Physical-core confinement
 
@@ -196,8 +178,8 @@ after every required match completes. No automatic crash recovery converts broke
 engine/protocol matches into tuning evidence; real time forfeits remain results.
 
 Opening positions are deduplicated and split deterministically into 80% training
-and 20% held-out validation. Validation uses the same seeds at both checkpoints.
-The two checks share positions, so their scores are correlated. The validation set
+and 20% held-out validation. Validation uses the same seeds at each checkpoint.
+The checks share positions, so their scores are correlated. The validation set
 is held out from SPSA, but repeated human selection based on it can still overfit.
 
 Outputs include:

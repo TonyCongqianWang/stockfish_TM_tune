@@ -36,7 +36,13 @@ def summarize(out):
         relative = result_file.parent.relative_to(out)
         stage = relative.parts[0]
         tc = result['tc']
-        kind = relative.parts[-1] if stage.startswith('iteration-') else 'verification'
+        if stage.startswith('iteration-'):
+            kind = relative.parts[-1]
+        elif stage == 'sweep-eval-base':
+            stage = str(Path(*relative.parts[:2]))
+            kind = 'sweep'
+        else:
+            kind = 'verification'
         matches.append({'path': str(relative), **{k: v for k, v in result.items() if k != 'identity'}})
         path = result_file.parent / 'games.pgn'
         compressed = path.with_suffix('.pgn.gz')

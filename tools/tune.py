@@ -160,12 +160,21 @@ def integer_options(theta, specs):
     return {k: round(specs[k]['min'] + v * (specs[k]['max'] - specs[k]['min'])) for k, v in theta.items()}
 
 
+def perturbation_widths(names, iteration, cfg):
+    schedule = cfg['spsa']
+    decay = iteration ** schedule['gamma']
+    overrides = schedule.get('parameter_overrides', {})
+    return {name: overrides.get(name, {}).get('perturbation', schedule['perturbation']) / decay
+            for name in names}
+
+
 def perturb(theta, specs, iteration, cfg):
     rng = random.Random(cfg['seed'] + iteration * 1000003)
-    c = cfg['spsa']['perturbation'] / iteration ** cfg['spsa']['gamma']
+    widths = perturbation_widths(theta, iteration, cfg)
     plus, minus = {}, {}
     for k, value in theta.items():
         sign = rng.choice((-1, 1))
+        c = widths[k]
         plus[k], minus[k] = min(1, max(0, value + sign * c)), min(1, max(0, value - sign * c))
     return integer_options(plus, specs), integer_options(minus, specs)
 
@@ -193,6 +202,12 @@ def validate_config(cfg):
     cfg['effective_workers'] = min(cfg['max_workers'], math.floor(cfg['workers'] * cfg['oversubscription']))
     if cfg['verification_total_pairs'] < 2 * len(cfg['strata']):
         raise ValueError('Verification budget must include every TC at both checkpoints')
+    if 'initial_verification_pairs' in cfg and cfg['initial_verification_pairs'] < len(cfg['strata']):
+        raise ValueError('Initial verification budget must include every TC')
+    sweep = cfg.get('eval_base_sweep')
+    if sweep and (sweep['pairs_per_value'] < len(cfg['strata']) or not sweep['values']
+                  or len(set(sweep['values'])) != len(sweep['values'])):
+        raise ValueError('Use distinct sweep values and enough pairs for every TC')
     if any(cfg['spsa'][k] <= 0 for k in ('perturbation', 'learning_rate', 'max_step')):
         raise ValueError('SPSA perturbation, learning rate and max step must be positive')
     if cfg['spsa']['stability'] < 0 or cfg['hash_mb'] < 1 or cfg['move_overhead_ms'] < 0:
@@ -217,20 +232,14 @@ def split_book(source, out, seed):
         (out / name).write_text('\n'.join(subset) + '\n')
 
 
-def verify(out, iteration, theta, specs, env, cfg):
-    folder = out / f'verify-{iteration:06d}'
-    folder.mkdir(exist_ok=True)
-    opts = integer_options(theta, specs)
+def master_tournament(folder, opts, total, book, seed, env, cfg):
+    folder.mkdir(parents=True, exist_ok=True)
     save(folder / 'parameters.json', opts)
-    total = cfg['verification_total_pairs'] // 2
-    if iteration == cfg['iterations']:
-        total = cfg['verification_total_pairs'] - total
     results = []
     for i, (stratum, pairs) in enumerate(zip(cfg['strata'], allocation(total, cfg['strata']))):
         if pairs:
-            # Same validation seeds at both checkpoints; no training positions.
             result = run_match(folder / stratum['id'], env, cfg, stratum['tc'], pairs,
-                               opts, {}, cfg['seed'] + 90000000 + i, out / 'validation.epd', True,
+                               opts, {}, seed + i, book, True,
                                workers=min(cfg['workers'], cfg['max_workers']))
             results.append({'stratum': stratum['id'], 'weight': stratum['weight'], **result})
     weight_sum = sum(r['weight'] for r in results)
@@ -240,9 +249,60 @@ def verify(out, iteration, theta, specs, env, cfg):
     aggregate = {'weighted_score': score, 'weighted_score_se': se,
                  'games': sum(r['games'] for r in results),
                  'wdl': [sum(r['wdl'][i] for r in results) for i in range(3)]}
-    save(folder / 'summary.json', {'iteration': iteration, 'pairs': total, 'strata': results,
-                                 'aggregate': aggregate,
-                                 'note': 'Per-stratum paired normal CIs are descriptive; no strength claim from tiny smoke samples.'})
+    return {'pairs': total, 'strata': results, 'aggregate': aggregate,
+            'note': 'Per-stratum paired normal CIs are descriptive; no strength claim from tiny smoke samples.'}
+
+
+def verify(out, iteration, theta, specs, env, cfg):
+    folder = out / f'verify-{iteration:06d}'
+    total = cfg['verification_total_pairs'] // 2
+    if iteration == 0:
+        total = cfg['initial_verification_pairs']
+    elif iteration == cfg['iterations']:
+        total = cfg['verification_total_pairs'] - total
+    summary = master_tournament(folder, integer_options(theta, specs), total,
+                                out / 'validation.epd', cfg['seed'] + 90000000, env, cfg)
+    save(folder / 'summary.json', {'iteration': iteration, **summary})
+
+
+def initial_tuning_specs(out, active, env, cfg):
+    configured = cfg.get('initial_options', {})
+    overrides = cfg.get('spsa', {}).get('parameter_overrides', {})
+    unknown = (configured.keys() | overrides.keys()) - active.keys()
+    if unknown:
+        raise ValueError(f"Starting settings or SPSA overrides reference inactive options: {sorted(unknown)}")
+    specs = {}
+    for name, uci in active.items():
+        override = overrides.get(name, {})
+        low = override.get('min', uci['min'])
+        high = override.get('max', uci['max'])
+        default = configured.get(name, uci['default'])
+        if (not uci['min'] <= low < high <= uci['max'] or type(default) is not int
+                or not low <= default <= high or override.get('perturbation', 1) <= 0):
+            raise ValueError(f'Invalid tuning range, starting value or perturbation for {name}')
+        specs[name] = {'min': low, 'max': high, 'default': default}
+    sweep = cfg.get('eval_base_sweep')
+    if sweep:
+        spec = specs.get('TMEvalBase')
+        if spec is None or any(type(v) is not int or not spec['min'] <= v <= spec['max']
+                               for v in sweep['values']):
+            raise ValueError('Sweep values must be within the active TMEvalBase tuning range')
+        folder = out / 'sweep-eval-base'
+        opts = {name: spec['default'] for name, spec in specs.items()}
+        scores = {}
+        for value in sweep['values']:
+            trial = folder / str(value)
+            summary = master_tournament(trial, {**opts, 'TMEvalBase': value},
+                                        sweep['pairs_per_value'], out / 'training.epd',
+                                        cfg['seed'] + 95000000, env, cfg)
+            save(trial / 'summary.json', summary)
+            scores[value] = summary['aggregate']['weighted_score']
+        # In a tie, use the first configured value.
+        winner = max(scores, key=scores.__getitem__)
+        save(folder / 'summary.json', {'selected': winner, 'weighted_scores': scores})
+        spec['default'] = winner
+        print(f'TMEvalBase sweep selected {winner} (score {scores[winner]:.4%})', flush=True)
+    return specs
 
 
 def run(out, cfg, env):
@@ -254,11 +314,16 @@ def run(out, cfg, env):
     active = {k: v for k, v in specs.items() if k != 'TMPonderBonus' and
               (not k.startswith('TMCyclic') or any('/' in s['tc'] for s in cfg['strata']))}
     active = {k: v for k, v in active.items() if k not in cfg.get('freeze', [])}
-    save(out / 'parameters.json', {'all': specs, 'active': list(active),
-                                 'inactive': sorted(set(specs) - set(active))})
     if not active:
         raise ValueError('No active TM parameters')
-    if cfg.get('async_spsa', {}).get('enabled'):
+    is_async = cfg.get('async_spsa', {}).get('enabled')
+    if is_async and cfg.get('eval_base_sweep') and (len(env['cpu_affinity']) != 16 or cfg['workers'] != 16):
+        raise ValueError('Async mode requires exactly 16 selected physical cores')
+    active = initial_tuning_specs(out, active, env, cfg)
+    save(out / 'parameters.json', {'all': specs, 'active': list(active),
+                                 'inactive': sorted(set(specs) - set(active)),
+                                 'tuning': active})
+    if is_async:
         # The async runner owns its own state format. Never initialize a
         # synchronous state.json before dispatching to it.
         from async_tune import run_async
@@ -269,6 +334,10 @@ def run(out, cfg, env):
     else:
         state = {'iteration': 0, 'theta': {k: (s['default'] - s['min']) / (s['max'] - s['min']) for k, s in active.items()}, 'history': []}
         save(state_path, state)
+    if ('initial_verification_pairs' in cfg
+            and not (out / 'verify-000000' / 'summary.json').exists()):
+        initial = {k: (s['default'] - s['min']) / (s['max'] - s['min']) for k, s in active.items()}
+        verify(out, 0, initial, active, env, cfg)
     for iteration in range(1, cfg['iterations'] + 1):
         # Verification is independently resumable, including a stop just after an update.
         if iteration > state['iteration']:
